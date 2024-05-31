@@ -1,0 +1,152 @@
+name: Generate sing-box rule-set
+
+on:
+  schedule:
+  - cron: "30 5 * * *"
+  workflow_dispatch:
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    steps:
+
+    - name: Run the install script
+      run: |
+        bash <(curl -fsSL https://sing-box.app/deb-install.sh)
+
+    - name: Download geoip.db and geosite.db
+      run: |
+        curl -O https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/release/geoip.db
+        curl -O https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/release/geosite.db
+
+    - name: Export categories
+      run: |
+        mkdir -p rule-set/json-rules
+        geosite_categories=("category-ads-all" "malware" "phishing" "cryptominers" "private" "ir" "cn" "nsfw")
+        geoip_categories=("malware" "phishing" "private" "ir" "cn" "ru")
+        for i in "${geosite_categories[@]}"; do
+          sing-box geosite -f geosite.db -o rule-set/json-rules/geosite-$i.json export $i
+        done
+        for i in "${geoip_categories[@]}"; do
+          sing-box geoip -f geoip.db -o rule-set/json-rules/geoip-$i.json export $i
+        done
+
+    - name: Generate Pi-hole blocklist
+      run: |
+        jq -n --argjson domains "$(
+          curl -fsSL https://raw.githubusercontent.com/im-sm/Pi-hole-Torrent-Blocklist/main/all-torrent-websites.txt |
+          grep -v '^#' |
+          grep -v '^$' |
+          jq -R . |
+          jq -s .
+        )" '{"version": 1,"rules": [{"domain": $domains}]}' > rule-set/json-rules/geosite-torrent-websites.json
+    
+        jq -n --argjson domains "$(
+          curl -fsSL https://raw.githubusercontent.com/im-sm/Pi-hole-Torrent-Blocklist/main/all-torrent-trackres.txt |
+          grep -v '^#' |
+          grep -v '^$' |
+          jq -R . |
+          jq -s .
+        )" '{"version": 1,"rules": [{"domain": $domains}]}' > rule-set/json-rules/geosite-torrent-trackers.json
+    
+    - name: Remove cp.cloudflare.com from private geosite
+      run: |
+        json=$(< rule-set/json-rules/geosite-private.json)
+        echo "$json" | jq '.rules[0].domain -= ["cp.cloudflare.com"]' > rule-set/json-rules/geosite-private.json
+    
+    - name: Generate bypass combined list
+      run: |
+        jq -s '
+        reduce .[] as $item (
+          {"version": 1, "rules": [{"domain": [], "domain_suffix": [], "domain_keyword": [], "domain_regex": [], "ip_cidr": []}]};
+          .rules[0].domain += (if $item.rules[0].domain | type == "string" then [$item.rules[0].domain] else $item.rules[0].domain end) | 
+          .rules[0].domain_suffix += (if $item.rules[0].domain_suffix | type == "string" then [$item.rules[0].domain_suffix] else $item.rules[0].domain_suffix end) | 
+          .rules[0].domain_keyword += (if $item.rules[0].domain_keyword | type == "string" then [$item.rules[0].domain_keyword] else $item.rules[0].domain_keyword end) | 
+          .rules[0].domain_regex += (if $item.rules[0].domain_regex | type == "string" then [$item.rules[0].domain_regex] else $item.rules[0].domain_regex end) | 
+          .rules[0].ip_cidr += (if $item.rules[0].ip_cidr | type == "string" then [$item.rules[0].ip_cidr] else $item.rules[0].ip_cidr end)
+        ) | .rules[0] |= with_entries(select(.value != []))' \
+          rule-set/json-rules/geosite-private.json \
+          rule-set/json-rules/geosite-ir.json \
+          rule-set/json-rules/geosite-cn.json \
+          rule-set/json-rules/geoip-private.json \
+          rule-set/json-rules/geoip-ir.json \
+          rule-set/json-rules/geoip-cn.json \
+          rule-set/json-rules/geoip-ru.json \
+          > rule-set/json-rules/bypass.json
+
+    - name: Generate block combined list
+      run: |
+        jq -s '
+        reduce .[] as $item (
+          {"version": 1, "rules": [{"domain": [], "domain_suffix": [], "domain_keyword": [], "domain_regex": [], "ip_cidr": []}]};
+          .rules[0].domain += (if $item.rules[0].domain | type == "string" then [$item.rules[0].domain] else $item.rules[0].domain end) | 
+          .rules[0].domain_suffix += (if $item.rules[0].domain_suffix | type == "string" then [$item.rules[0].domain_suffix] else $item.rules[0].domain_suffix end) | 
+          .rules[0].domain_keyword += (if $item.rules[0].domain_keyword | type == "string" then [$item.rules[0].domain_keyword] else $item.rules[0].domain_keyword end) | 
+          .rules[0].domain_regex += (if $item.rules[0].domain_regex | type == "string" then [$item.rules[0].domain_regex] else $item.rules[0].domain_regex end) | 
+          .rules[0].ip_cidr += (if $item.rules[0].ip_cidr | type == "string" then [$item.rules[0].ip_cidr] else $item.rules[0].ip_cidr end)
+        ) | .rules[0] |= with_entries(select(.value != []))' \
+          rule-set/json-rules/geosite-category-ads-all.json \
+          rule-set/json-rules/geosite-malware.json \
+          rule-set/json-rules/geosite-phishing.json \
+          rule-set/json-rules/geosite-cryptominers.json \
+          rule-set/json-rules/geosite-torrent-websites.json \
+          rule-set/json-rules/geosite-torrent-trackers.json \
+          rule-set/json-rules/geoip-malware.json \
+          rule-set/json-rules/geoip-phishing.json \
+          > rule-set/json-rules/block.json
+
+    - name: Compile rule-set files
+      run: |
+        for file in rule-set/json-rules/*.json; do
+          filename=$(basename -- "$file")
+          filename_no_ext="${filename%.*}"
+          sing-box rule-set compile "$file" -o "rule-set/$filename_no_ext.srs"
+        done
+
+    - name: Set ENV variables
+      run: |
+        echo "RELEASE_NAME=$(date +%Y%m%d%H%M)" >> $GITHUB_ENV
+        echo "TAG_NAME=$(date +%Y%m%d%H%M)" >> $GITHUB_ENV
+        echo "RELEASE_DATE=$(date +'%A %F %T %Z')" >> $GITHUB_ENV
+
+    - name: Generate Release Notes
+      run: |
+        echo "* Updated on ${{ env.RELEASE_DATE }}" > RELEASE_NOTES
+
+    - name: Push to rule-set branch
+      run: |
+        cd rule-set || exit 1
+        git init
+        git config --local user.name "github-actions[bot]"
+        git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git checkout -b rule-set
+        git add .
+        git commit -m "${{ env.RELEASE_NAME }}"
+        git remote add origin "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+        git push -f origin rule-set
+
+    - name: Purge jsDelivr CDN cache - rule-set
+      run: |
+        cd rule-set || exit 1
+        for file in $(ls); do
+          curl -i "https://purge.jsdelivr.net/gh/${{ github.repository }}@rule-set/${file}"
+        done
+
+    - name: Release and upload assets
+      uses: softprops/action-gh-release@v2
+      with:
+        name: ${{ env.RELEASE_NAME }}
+        tag_name: ${{ env.TAG_NAME }}
+        body_path: RELEASE_NOTES
+        draft: false
+        files: ./rule-set/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Clean older releases
+      uses: dev-drprasad/delete-older-releases@v0.3.3
+      with:
+        keep_latest: 7
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
