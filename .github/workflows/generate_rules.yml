@@ -10,9 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
-    - name: Run the install script
+    - name: Install sing-box
       run: |
-        bash <(curl -fsSL https://sing-box.app/deb-install.sh)
+        curl -Lo sing-box.deb "https://github.com/SagerNet/sing-box/releases/download/v1.8.14/sing-box_1.8.14_linux_amd64.deb"
+        sudo dpkg -i sing-box.deb
+        rm sing-box.deb
 
     - name: Download geoip.db and geosite.db
       run: |
