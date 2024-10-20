@@ -87,7 +87,6 @@ jobs:
           .rules[0].domain_regex += (if $item.rules[0].domain_regex | type == "string" then [$item.rules[0].domain_regex] else $item.rules[0].domain_regex end) | 
           .rules[0].ip_cidr += (if $item.rules[0].ip_cidr | type == "string" then [$item.rules[0].ip_cidr] else $item.rules[0].ip_cidr end)
         ) | .rules[0] |= with_entries(select(.value != []))' \
-          rule-set/json-rules/geosite-category-ads-all.json \
           rule-set/json-rules/geosite-malware.json \
           rule-set/json-rules/geosite-phishing.json \
           rule-set/json-rules/geosite-cryptominers.json \
