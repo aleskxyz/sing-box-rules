@@ -69,7 +69,6 @@ jobs:
         ) | .rules[0] |= with_entries(select(.value != []))' \
           rule-set/json-rules/geosite-private.json \
           rule-set/json-rules/geosite-ir.json \
-          rule-set/json-rules/geosite-cn.json \
           rule-set/json-rules/geoip-private.json \
           rule-set/json-rules/geoip-ir.json \
           rule-set/json-rules/geoip-cn.json \
