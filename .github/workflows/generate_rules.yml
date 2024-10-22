@@ -72,7 +72,6 @@ jobs:
           rule-set/json-rules/geoip-private.json \
           rule-set/json-rules/geoip-ir.json \
           rule-set/json-rules/geoip-cn.json \
-          rule-set/json-rules/geoip-ru.json \
           > rule-set/json-rules/bypass.json
 
     - name: Generate block combined list
